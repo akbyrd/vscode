@@ -28,12 +28,12 @@ export class MoveLinesCommand implements ICommand {
 	private _moveEndLineSelectionShrink: boolean;
 
 	constructor(
-		selection: Selection,
+		selections: Selection[],
 		isMovingDown: boolean,
 		autoIndent: EditorAutoIndentStrategy,
 		@ILanguageConfigurationService private readonly _languageConfigurationService: ILanguageConfigurationService
 	) {
-		this._selection = selection;
+		this._selection = selections[0];
 		this._isMovingDown = isMovingDown;
 		this._autoIndent = autoIndent;
 		this._selectionId = null;

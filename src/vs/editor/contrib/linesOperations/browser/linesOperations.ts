@@ -178,9 +178,7 @@ abstract class AbstractMoveLinesAction extends EditorAction {
 		const selections = editor.getSelections() || [];
 		const autoIndent = editor.getOption(EditorOption.autoIndent);
 
-		for (const selection of selections) {
-			commands.push(new MoveLinesCommand(selection, this.down, autoIndent, languageConfigurationService));
-		}
+		commands.push(new MoveLinesCommand(selections, this.down, autoIndent, languageConfigurationService));
 
 		editor.pushUndoStop();
 		editor.executeCommands(this.id, commands);

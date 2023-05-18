@@ -24,6 +24,20 @@ export function testCommand(
 	forceTokenization?: boolean,
 	prepare?: (accessor: ServicesAccessor, disposables: DisposableStore) => void
 ): void {
+	const commandFactoryWithSingleSelection = (accessor: ServicesAccessor, selections: Selection[]) => { return commandFactory(accessor, selections[0]); };
+	testCommandWithMultipleSelection(lines, languageId, [selection], commandFactoryWithSingleSelection, expectedLines, [expectedSelection], forceTokenization, prepare);
+}
+
+export function testCommandWithMultipleSelection(
+	lines: string[],
+	languageId: string | null,
+	selections: Selection[],
+	commandFactory: (accessor: ServicesAccessor, selections: Selection[]) => ICommand,
+	expectedLines: string[],
+	expectedSelections: Selection[],
+	forceTokenization?: boolean,
+	prepare?: (accessor: ServicesAccessor, disposables: DisposableStore) => void
+): void {
 	const disposables = new DisposableStore();
 	const instantiationService = createCodeEditorServices(disposables);
 	if (prepare) {
@@ -37,15 +51,15 @@ export function testCommand(
 		model.tokenization.forceTokenization(model.getLineCount());
 	}
 
-	viewModel.setSelections('tests', [selection]);
+	viewModel.setSelections('tests', selections);
 
-	const command = instantiationService.invokeFunction((accessor) => commandFactory(accessor, viewModel.getSelection()));
+	const command = instantiationService.invokeFunction((accessor) => commandFactory(accessor, viewModel.getSelections()));
 	viewModel.executeCommand(command, 'tests');
 
 	assert.deepStrictEqual(model.getLinesContent(), expectedLines);
 
-	const actualSelection = viewModel.getSelection();
-	assert.deepStrictEqual(actualSelection.toString(), expectedSelection.toString());
+	const actualSelections = viewModel.getSelections();
+	assert.deepStrictEqual(actualSelections.toString(), expectedSelections.toString());
 
 	disposables.dispose();
 }

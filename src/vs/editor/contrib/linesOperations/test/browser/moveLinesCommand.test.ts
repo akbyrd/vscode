@@ -10,23 +10,23 @@ import { IndentationRule } from 'vs/editor/common/languages/languageConfiguratio
 import { ILanguageConfigurationService } from 'vs/editor/common/languages/languageConfigurationRegistry';
 import { LanguageService } from 'vs/editor/common/services/languageService';
 import { MoveLinesCommand } from 'vs/editor/contrib/linesOperations/browser/moveLinesCommand';
-import { testCommand } from 'vs/editor/test/browser/testCommand';
+import { testCommand, testCommandWithMultipleSelection } from 'vs/editor/test/browser/testCommand';
 import { TestLanguageConfigurationService } from 'vs/editor/test/common/modes/testLanguageConfigurationService';
 
-function testMoveLinesDownCommand(lines: string[], selection: Selection, expectedLines: string[], expectedSelection: Selection, languageConfigurationService = new TestLanguageConfigurationService()): void {
-	testCommand(lines, null, selection, (accessor, sel) => new MoveLinesCommand(sel, true, EditorAutoIndentStrategy.Advanced, languageConfigurationService), expectedLines, expectedSelection);
+function testMoveLinesDownCommand(lines: string[], selections: Selection[], expectedLines: string[], expectedSelections: Selection[], languageConfigurationService = new TestLanguageConfigurationService()): void {
+	testCommandWithMultipleSelection(lines, null, selections, (accessor, sels) => new MoveLinesCommand(sels, true, EditorAutoIndentStrategy.Advanced, languageConfigurationService), expectedLines, expectedSelections);
 }
 
-function testMoveLinesUpCommand(lines: string[], selection: Selection, expectedLines: string[], expectedSelection: Selection, languageConfigurationService = new TestLanguageConfigurationService()): void {
-	testCommand(lines, null, selection, (accessor, sel) => new MoveLinesCommand(sel, false, EditorAutoIndentStrategy.Advanced, languageConfigurationService), expectedLines, expectedSelection);
+function testMoveLinesUpCommand(lines: string[], selections: Selection[], expectedLines: string[], expectedSelections: Selection[], languageConfigurationService = new TestLanguageConfigurationService()): void {
+	testCommandWithMultipleSelection(lines, null, selections, (accessor, sels) => new MoveLinesCommand(sels, false, EditorAutoIndentStrategy.Advanced, languageConfigurationService), expectedLines, expectedSelections);
 }
 
 function testMoveLinesDownWithIndentCommand(languageId: string, lines: string[], selection: Selection, expectedLines: string[], expectedSelection: Selection, languageConfigurationService = new TestLanguageConfigurationService()): void {
-	testCommand(lines, languageId, selection, (accessor, sel) => new MoveLinesCommand(sel, true, EditorAutoIndentStrategy.Full, languageConfigurationService), expectedLines, expectedSelection);
+	testCommand(lines, languageId, selection, (accessor, sel) => new MoveLinesCommand([sel], true, EditorAutoIndentStrategy.Full, languageConfigurationService), expectedLines, expectedSelection);
 }
 
 function testMoveLinesUpWithIndentCommand(languageId: string, lines: string[], selection: Selection, expectedLines: string[], expectedSelection: Selection, languageConfigurationService = new TestLanguageConfigurationService()): void {
-	testCommand(lines, languageId, selection, (accessor, sel) => new MoveLinesCommand(sel, false, EditorAutoIndentStrategy.Full, languageConfigurationService), expectedLines, expectedSelection);
+	testCommand(lines, languageId, selection, (accessor, sel) => new MoveLinesCommand([sel], false, EditorAutoIndentStrategy.Full, languageConfigurationService), expectedLines, expectedSelection);
 }
 
 suite('Editor Contrib - Move Lines Command', () => {
@@ -40,7 +40,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fourth line',
 				'fifth'
 			],
-			new Selection(1, 1, 1, 1),
+			[
+				new Selection(1, 1, 1, 1)
+			],
 			[
 				'first',
 				'second line',
@@ -48,7 +50,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fourth line',
 				'fifth'
 			],
-			new Selection(1, 1, 1, 1)
+			[
+				new Selection(1, 1, 1, 1)
+			]
 		);
 
 		testMoveLinesDownCommand(
@@ -59,7 +63,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fourth line',
 				'fifth'
 			],
-			new Selection(5, 1, 5, 1),
+			[
+				new Selection(5, 1, 5, 1)
+			],
 			[
 				'first',
 				'second line',
@@ -67,7 +73,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fourth line',
 				'fifth'
 			],
-			new Selection(5, 1, 5, 1)
+			[
+				new Selection(5, 1, 5, 1)
+			]
 		);
 	});
 
@@ -80,7 +88,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fourth line',
 				'fifth'
 			],
-			new Selection(1, 4, 1, 1),
+			[
+				new Selection(1, 4, 1, 1)
+			],
 			[
 				'second line',
 				'first',
@@ -88,7 +98,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fourth line',
 				'fifth'
 			],
-			new Selection(2, 4, 2, 1)
+			[
+				new Selection(2, 4, 2, 1)
+			]
 		);
 	});
 
@@ -101,7 +113,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fourth line',
 				'fifth'
 			],
-			new Selection(2, 1, 2, 1),
+			[
+				new Selection(2, 1, 2, 1)
+			],
 			[
 				'second line',
 				'first',
@@ -109,7 +123,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fourth line',
 				'fifth'
 			],
-			new Selection(1, 1, 1, 1)
+			[
+				new Selection(1, 1, 1, 1)
+			],
 		);
 	});
 
@@ -122,7 +138,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fourth line',
 				'fifth'
 			],
-			new Selection(2, 12, 2, 12),
+			[
+				new Selection(2, 12, 2, 12)
+			],
 			[
 				'second line',
 				'first',
@@ -130,7 +148,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fourth line',
 				'fifth'
 			],
-			new Selection(1, 12, 1, 12)
+			[
+				new Selection(1, 12, 1, 12)
+			]
 		);
 	});
 
@@ -143,7 +163,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fourth line',
 				'fifth'
 			],
-			new Selection(5, 6, 5, 6),
+			[
+				new Selection(5, 6, 5, 6)
+			],
 			[
 				'first',
 				'second line',
@@ -151,7 +173,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fifth',
 				'fourth line'
 			],
-			new Selection(4, 6, 4, 6)
+			[
+				new Selection(4, 6, 4, 6)
+			]
 		);
 	});
 
@@ -164,7 +188,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fourth line',
 				'fifth'
 			],
-			new Selection(5, 6, 5, 1),
+			[
+				new Selection(5, 6, 5, 1)
+			],
 			[
 				'first',
 				'second line',
@@ -172,7 +198,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fifth',
 				'fourth line'
 			],
-			new Selection(4, 6, 4, 1)
+			[
+				new Selection(4, 6, 4, 1)
+			]
 		);
 	});
 
@@ -185,7 +213,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fourth line',
 				'fifth'
 			],
-			new Selection(5, 1, 5, 1),
+			[
+				new Selection(5, 1, 5, 1)
+			],
 			[
 				'first',
 				'second line',
@@ -193,7 +223,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fifth',
 				'fourth line'
 			],
-			new Selection(4, 1, 4, 1)
+			[
+				new Selection(4, 1, 4, 1)
+			]
 		);
 	});
 
@@ -206,7 +238,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fourth line',
 				'fifth'
 			],
-			new Selection(4, 1, 4, 1),
+			[
+				new Selection(4, 1, 4, 1)
+			],
 			[
 				'first',
 				'second line',
@@ -214,7 +248,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fifth',
 				'fourth line'
 			],
-			new Selection(5, 1, 5, 1)
+			[
+				new Selection(5, 1, 5, 1)
+			]
 		);
 	});
 
@@ -227,7 +263,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fourth line',
 				'fifth'
 			],
-			new Selection(4, 4, 2, 2),
+			[
+				new Selection(4, 4, 2, 2),
+			],
 			[
 				'first',
 				'fifth',
@@ -235,7 +273,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'third line',
 				'fourth line'
 			],
-			new Selection(5, 4, 3, 2)
+			[
+				new Selection(5, 4, 3, 2)
+			]
 		);
 	});
 
@@ -248,7 +288,9 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fourth line',
 				'fifth'
 			],
-			new Selection(2, 1, 1, 1),
+			[
+				new Selection(2, 1, 1, 1)
+			],
 			[
 				'second line',
 				'first',
@@ -256,7 +298,211 @@ suite('Editor Contrib - Move Lines Command', () => {
 				'fourth line',
 				'fifth'
 			],
-			new Selection(3, 1, 2, 1)
+			[
+				new Selection(3, 1, 2, 1)
+			]
+		);
+	});
+
+	// ------------------------------------------------------------------------------------------------------------------
+
+	test('move up two consecutive lines, blocked', function () {
+		testMoveLinesDownCommand(
+			[
+				'1',
+				'2',
+				'3',
+				'4',
+			],
+			[
+				new Selection(1, 1, 1, 1),
+				new Selection(2, 1, 2, 1),
+			],
+			[
+				'1',
+				'2',
+				'3',
+				'4',
+			],
+			[
+				new Selection(1, 1, 1, 1),
+				new Selection(2, 1, 2, 1),
+			]
+		);
+	});
+
+	test('move down two consecutive lines, blocked', function () {
+		testMoveLinesDownCommand(
+			[
+				'1',
+				'2',
+				'3',
+				'4',
+			],
+			[
+				new Selection(3, 1, 3, 1),
+				new Selection(4, 1, 4, 1),
+			],
+			[
+				'1',
+				'2',
+				'3',
+				'4',
+			],
+			[
+				new Selection(3, 1, 3, 1),
+				new Selection(4, 1, 4, 1),
+			]
+		);
+	});
+
+	test('move up two non-consecutive lines, one blocked', function () {
+		testMoveLinesDownCommand(
+			[
+				'1',
+				'2',
+				'3',
+				'4',
+			],
+			[
+				new Selection(1, 1, 1, 1),
+				new Selection(3, 1, 3, 1),
+			],
+			[
+				'1',
+				'3',
+				'2',
+				'4',
+			],
+			[
+				new Selection(1, 1, 1, 1),
+				new Selection(2, 1, 2, 1),
+			]
+		);
+	});
+
+	test('move down two non-consecutive lines, one blocked', function () {
+		testMoveLinesDownCommand(
+			[
+				'1',
+				'2',
+				'3',
+				'4',
+			],
+			[
+				new Selection(2, 1, 2, 1),
+				new Selection(4, 1, 4, 1),
+			],
+			[
+				'1',
+				'3',
+				'2',
+				'4',
+			],
+			[
+				new Selection(3, 1, 3, 1),
+				new Selection(4, 1, 4, 1),
+			]
+		);
+	});
+
+	test('move up two consecutive lines', function () {
+		testMoveLinesDownCommand(
+			[
+				'1',
+				'2',
+				'3',
+				'4',
+			],
+			[
+				new Selection(2, 1, 2, 1),
+				new Selection(3, 1, 3, 1),
+			],
+			[
+				'2',
+				'3',
+				'1',
+				'4',
+			],
+			[
+				new Selection(1, 1, 1, 1),
+				new Selection(2, 1, 2, 1),
+			]
+		);
+	});
+
+	test('move down two consecutive lines', function () {
+		testMoveLinesDownCommand(
+			[
+				'1',
+				'2',
+				'3',
+				'4',
+			],
+			[
+				new Selection(2, 1, 2, 1),
+				new Selection(3, 1, 3, 1),
+			],
+			[
+				'1',
+				'4',
+				'2',
+				'3',
+			],
+			[
+				new Selection(3, 1, 3, 1),
+				new Selection(4, 1, 4, 1),
+			]
+		);
+	});
+
+	test('move up two non-consecutive lines', function () {
+		testMoveLinesDownCommand(
+			[
+				'1',
+				'2',
+				'3',
+				'4',
+			],
+			[
+				new Selection(2, 1, 2, 1),
+				new Selection(4, 1, 4, 1),
+			],
+			[
+				'2',
+				'1',
+				'4',
+				'3',
+			],
+			[
+				new Selection(1, 1, 1, 1),
+				new Selection(3, 1, 3, 1),
+			]
+		);
+	});
+
+	test('move down two non-consecutive lines', function () {
+		testMoveLinesDownCommand(
+			[
+				'1',
+				'2',
+				'3',
+				'4',
+			],
+			[
+				new Selection(1, 1, 1, 1),
+				new Selection(3, 1, 3, 1),
+			],
+			[
+				'2',
+				'1',
+				'4',
+				'3',
+			],
+			[
+				new Selection(2, 1, 2, 1),
+				new Selection(4, 1, 4, 1),
+			]
 		);
 	});
 });
