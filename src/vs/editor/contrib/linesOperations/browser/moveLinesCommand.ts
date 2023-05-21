@@ -195,13 +195,15 @@ export class MoveLinesCommand implements ICommand {
 				}
 			} else {
 				movingLineNumber = s.startLineNumber - 1;
-				movingLineText = model.getLineContent(movingLineNumber);
-
-				// Delete line that needs to be moved
-				builder.addEditOperation(new Range(movingLineNumber, 1, movingLineNumber + 1, 1), null);
+				movingLineText = model.getLineContent(s.startLineNumber);
 
 				// Insert line that needs to be moved after
-				builder.addEditOperation(new Range(s.endLineNumber, model.getLineMaxColumn(s.endLineNumber), s.endLineNumber, model.getLineMaxColumn(s.endLineNumber)), '\n' + movingLineText);
+				const insertRange = new Range(s.startLineNumber - 1, 1, s.startLineNumber - 1, 1);
+				builder.addEditOperation(insertRange, movingLineText + '\n');
+
+				// Delete line that needs to be moved
+				const removeRange = new Range(s.startLineNumber, 1, s.startLineNumber + 1, 1);
+				builder.addEditOperation(removeRange, null);
 
 				if (this.shouldAutoIndent(model, s)) {
 					virtualModel.getLineContent = (lineNumber: number) => {
@@ -411,6 +413,10 @@ export class MoveLinesCommand implements ICommand {
 		if (this._moveEndLineSelectionShrink && result.startLineNumber < result.endLineNumber) {
 			result = result.setEndPosition(result.endLineNumber, 2);
 		}
+
+		const offset = this._isMovingDown ? 1 : -1;
+		result = this._selection;
+		result = new Selection(result.startLineNumber + offset, result.startColumn, result.endLineNumber + offset, result.endColumn);
 
 		return result;
 	}
