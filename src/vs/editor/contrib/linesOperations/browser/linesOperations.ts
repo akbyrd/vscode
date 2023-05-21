@@ -25,6 +25,7 @@ import * as nls from 'vs/nls';
 import { MenuId } from 'vs/platform/actions/common/actions';
 import { KeybindingWeight } from 'vs/platform/keybinding/common/keybindingsRegistry';
 import { ILanguageConfigurationService } from 'vs/editor/common/languages/languageConfigurationRegistry';
+import { LineRange } from 'vs/editor/common/core/lineRange';
 
 // copy lines
 
@@ -178,7 +179,25 @@ abstract class AbstractMoveLinesAction extends EditorAction {
 		const selections = editor.getSelections() || [];
 		const autoIndent = editor.getOption(EditorOption.autoIndent);
 
-		commands.push(new MoveLinesCommand(selections, this.down, autoIndent, languageConfigurationService));
+		selections.sort(Selection.compareRangesUsingStarts);
+		for (let i = 0; i < selections.length; i++) {
+			let batch = new LineRange(selections[i].startLineNumber, selections[i].endLineNumber + 1);
+
+			let j = i;
+			for (; j < selections.length - 1; j++) {
+				const lineRange = new LineRange(selections[j + 1].startLineNumber, selections[j + 1].endLineNumber + 1);
+				if (batch.overlapOrTouch(lineRange)) {
+					batch = batch.join(lineRange);
+				} else {
+					break;
+				}
+			}
+
+			commands.push(new MoveLinesCommand([selections[i]], this.down, autoIndent, languageConfigurationService, batch, true));
+			while (i < j) {
+				commands.push(new MoveLinesCommand([selections[++i]], this.down, autoIndent, languageConfigurationService, batch, false));
+			}
+		}
 
 		editor.pushUndoStop();
 		editor.executeCommands(this.id, commands);

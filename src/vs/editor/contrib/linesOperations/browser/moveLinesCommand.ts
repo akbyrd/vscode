@@ -16,12 +16,15 @@ import { IndentConsts } from 'vs/editor/common/languages/supports/indentRules';
 import * as indentUtils from 'vs/editor/contrib/indentation/browser/indentUtils';
 import { getGoodIndentForLine, getIndentMetadata, IIndentConverter, IVirtualModel } from 'vs/editor/common/languages/autoIndent';
 import { getEnterAction } from 'vs/editor/common/languages/enterAction';
+import { LineRange } from 'vs/editor/common/core/lineRange';
 
 export class MoveLinesCommand implements ICommand {
 
 	private readonly _selection: Selection;
 	private readonly _isMovingDown: boolean;
 	private readonly _autoIndent: EditorAutoIndentStrategy;
+	private readonly _batch: LineRange;
+	private readonly _isFirstInBatch: boolean;
 
 	private _selectionId: string | null;
 	private _moveEndPositionDown?: boolean;
@@ -31,13 +34,17 @@ export class MoveLinesCommand implements ICommand {
 		selections: Selection[],
 		isMovingDown: boolean,
 		autoIndent: EditorAutoIndentStrategy,
-		@ILanguageConfigurationService private readonly _languageConfigurationService: ILanguageConfigurationService
+		@ILanguageConfigurationService private readonly _languageConfigurationService: ILanguageConfigurationService,
+		batch: LineRange,
+		isFirstInBatch: boolean
 	) {
 		this._selection = selections[0];
 		this._isMovingDown = isMovingDown;
 		this._autoIndent = autoIndent;
 		this._selectionId = null;
 		this._moveEndLineSelectionShrink = false;
+		this._batch = batch;
+		this._isFirstInBatch = isFirstInBatch;
 	}
 
 	public getEditOperations(model: ITextModel, builder: IEditOperationBuilder): void {
@@ -193,55 +200,74 @@ export class MoveLinesCommand implements ICommand {
 					// Insert line that needs to be moved before
 					builder.addEditOperation(new Range(s.startLineNumber, 1, s.startLineNumber, 1), insertingText + '\n');
 				}
+
 			} else {
-				movingLineNumber = s.startLineNumber - 1;
-				movingLineText = model.getLineContent(s.startLineNumber);
 
-				// Insert line that needs to be moved after
-				const insertRange = new Range(s.startLineNumber - 1, 1, s.startLineNumber - 1, 1);
-				builder.addEditOperation(insertRange, movingLineText + '\n');
+				if (this._isFirstInBatch) {
+					movingLineNumber = s.startLineNumber - 1;
 
-				// Delete line that needs to be moved
-				const removeRange = new Range(s.startLineNumber, 1, s.startLineNumber + 1, 1);
-				builder.addEditOperation(removeRange, null);
+					// Grab the text that needs to be moved
+					// (without a leading or trailing newline)
+					const srcStartLine = this._batch.startLineNumber;
+					const srcEndLine = this._batch.endLineNumberExclusive - 1;
+					const srcEndLineLen = model.getLineMaxColumn(srcEndLine);
+					const textRange = new Range(srcStartLine, 1, srcEndLine, srcEndLineLen);
+					const text = model.getValueInRange(textRange);
 
-				if (this.shouldAutoIndent(model, s)) {
-					virtualModel.getLineContent = (lineNumber: number) => {
-						if (lineNumber === movingLineNumber) {
-							return model.getLineContent(s.startLineNumber);
+					// Remove it
+					// (along with the preceding newline, so we don't need a special case for moving from the last line)
+					const prevLine = this._batch.startLineNumber - 1;
+					const prevLineLen = model.getLineMaxColumn(prevLine);
+					const removeRange = new Range(prevLine, prevLineLen, srcEndLine, srcEndLineLen);
+					builder.addEditOperation(removeRange, null);
+
+					// Re-insert it
+					// (using a trailing newline so we don't need a special case for moving to the first line)
+					const dstLine = this._batch.startLineNumber - 1;
+					const insertRange = new Range(dstLine, 1, dstLine, 1);
+					builder.addEditOperation(insertRange, text + '\n');
+
+					if (this.shouldAutoIndent(model, s)) {
+						virtualModel.getLineContent = (lineNumber: number) => {
+							if (lineNumber === movingLineNumber) {
+								return model.getLineContent(s.startLineNumber);
+							} else {
+								return model.getLineContent(lineNumber);
+							}
+						};
+
+						const ret = this.matchEnterRule(model, indentConverter, tabSize, s.startLineNumber, s.startLineNumber - 2);
+						// check if s.startLineNumber - 2 matches onEnter rules, if so adjust the moving block by onEnter rules.
+						if (ret !== null) {
+							if (ret !== 0) {
+								this.getIndentEditsOfMovingBlock(model, builder, s, tabSize, insertSpaces, ret);
+							}
 						} else {
-							return model.getLineContent(lineNumber);
-						}
-					};
+							// it doesn't match any onEnter rule, let's check indentation rules then.
+							const indentOfFirstLine = getGoodIndentForLine(
+								this._autoIndent,
+								virtualModel,
+								model.getLanguageIdAtPosition(s.startLineNumber, 1),
+								movingLineNumber,
+								indentConverter,
+								this._languageConfigurationService
+							);
+							if (indentOfFirstLine !== null) {
+								// adjust the indentation of the moving block
+								const oldIndent = strings.getLeadingWhitespace(model.getLineContent(s.startLineNumber));
+								const newSpaceCnt = indentUtils.getSpaceCnt(indentOfFirstLine, tabSize);
+								const oldSpaceCnt = indentUtils.getSpaceCnt(oldIndent, tabSize);
+								if (newSpaceCnt !== oldSpaceCnt) {
+									const spaceCntOffset = newSpaceCnt - oldSpaceCnt;
 
-					const ret = this.matchEnterRule(model, indentConverter, tabSize, s.startLineNumber, s.startLineNumber - 2);
-					// check if s.startLineNumber - 2 matches onEnter rules, if so adjust the moving block by onEnter rules.
-					if (ret !== null) {
-						if (ret !== 0) {
-							this.getIndentEditsOfMovingBlock(model, builder, s, tabSize, insertSpaces, ret);
-						}
-					} else {
-						// it doesn't match any onEnter rule, let's check indentation rules then.
-						const indentOfFirstLine = getGoodIndentForLine(
-							this._autoIndent,
-							virtualModel,
-							model.getLanguageIdAtPosition(s.startLineNumber, 1),
-							movingLineNumber,
-							indentConverter,
-							this._languageConfigurationService
-						);
-						if (indentOfFirstLine !== null) {
-							// adjust the indentation of the moving block
-							const oldIndent = strings.getLeadingWhitespace(model.getLineContent(s.startLineNumber));
-							const newSpaceCnt = indentUtils.getSpaceCnt(indentOfFirstLine, tabSize);
-							const oldSpaceCnt = indentUtils.getSpaceCnt(oldIndent, tabSize);
-							if (newSpaceCnt !== oldSpaceCnt) {
-								const spaceCntOffset = newSpaceCnt - oldSpaceCnt;
-
-								this.getIndentEditsOfMovingBlock(model, builder, s, tabSize, insertSpaces, spaceCntOffset);
+									this.getIndentEditsOfMovingBlock(model, builder, s, tabSize, insertSpaces, spaceCntOffset);
+								}
 							}
 						}
 					}
+				} else {
+					// No-op so we still get a chance to update our cursor position
+					builder.addEditOperation(new Range(1, 1, 1, 1), null);
 				}
 			}
 		}
