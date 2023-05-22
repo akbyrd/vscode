@@ -27,7 +27,6 @@ export class MoveLinesCommand implements ICommand {
 	private readonly _isFirstInBatch: boolean;
 
 	private _selectionId: string | null;
-	private _moveEndPositionDown?: boolean;
 	private _moveEndLineSelectionShrink: boolean;
 
 	constructor(
@@ -51,22 +50,20 @@ export class MoveLinesCommand implements ICommand {
 
 		const modelLineCount = model.getLineCount();
 
-		if (this._isMovingDown && this._selection.endLineNumber === modelLineCount) {
-			this._selectionId = builder.trackSelection(this._selection);
-			return;
-		}
-		if (!this._isMovingDown && this._selection.startLineNumber === 1) {
+		// Moving down but selection is at the end of the document, nothing to do
+		if (this._isMovingDown && this._batch.endLineNumberExclusive - 1 === modelLineCount) {
 			this._selectionId = builder.trackSelection(this._selection);
 			return;
 		}
 
-		this._moveEndPositionDown = false;
-		let s = this._selection;
-
-		if (s.startLineNumber < s.endLineNumber && s.endColumn === 1) {
-			this._moveEndPositionDown = true;
-			s = s.setEndPosition(s.endLineNumber - 1, model.getLineMaxColumn(s.endLineNumber - 1));
+		// Moving up but selection is at the beginning of the document, nothing to do
+		if (!this._isMovingDown && this._batch.startLineNumber === 1) {
+			this._selectionId = builder.trackSelection(this._selection);
+			return;
 		}
+
+		const s = this._selection;
+		builder.trackSelection(s);
 
 		const { tabSize, indentSize, insertSpaces } = model.getOptions();
 		const indentConverter = this.buildIndentConverter(tabSize, indentSize, insertSpaces);
@@ -85,194 +82,126 @@ export class MoveLinesCommand implements ICommand {
 			getLineContent: null as unknown as (lineNumber: number) => string,
 		};
 
-		if (s.startLineNumber === s.endLineNumber && model.getLineMaxColumn(s.startLineNumber) === 1) {
-			// Current line is empty
-			const lineNumber = s.startLineNumber;
-			const otherLineNumber = (this._isMovingDown ? lineNumber + 1 : lineNumber - 1);
+		if (this._isFirstInBatch) {
+			// Grab the text that needs to be moved
+			// (without a leading or trailing newline)
+			const srcStartLine = this._batch.startLineNumber;
+			const srcEndLine = this._batch.endLineNumberExclusive - 1;
+			const srcEndLineLen = model.getLineMaxColumn(srcEndLine);
+			const textRange = new Range(srcStartLine, 1, srcEndLine, srcEndLineLen);
+			const text = model.getValueInRange(textRange);
 
-			if (model.getLineMaxColumn(otherLineNumber) === 1) {
-				// Other line number is empty too, so no editing is needed
-				// Add a no-op to force running by the model
-				builder.addEditOperation(new Range(1, 1, 1, 1), null);
-			} else {
-				// Type content from other line number on line number
-				builder.addEditOperation(new Range(lineNumber, 1, lineNumber, 1), model.getLineContent(otherLineNumber));
+			// TODO: It's probably equivalent to special case first and last line as opposed to up vs down. Does that make
+			// it simpler to grab the text?
+			const prevLine = this._batch.startLineNumber - 1;
+			const nextLine = this._batch.endLineNumberExclusive;
 
-				// Remove content from other line number
-				builder.addEditOperation(new Range(otherLineNumber, 1, otherLineNumber, model.getLineMaxColumn(otherLineNumber)), null);
-			}
-			// Track selection at the other line number
-			s = new Selection(otherLineNumber, 1, otherLineNumber, 1);
-
-		} else {
-
-			let movingLineNumber: number;
-			let movingLineText: string;
-
+			// Remove it
 			if (this._isMovingDown) {
-				movingLineNumber = s.endLineNumber + 1;
-				movingLineText = model.getLineContent(movingLineNumber);
-				// Delete line that needs to be moved
-				builder.addEditOperation(new Range(movingLineNumber - 1, model.getLineMaxColumn(movingLineNumber - 1), movingLineNumber, model.getLineMaxColumn(movingLineNumber)), null);
+				// (along with the proceeding newline, so we don't need a special case for moving from the first line)
+				const removeRange = new Range(srcStartLine, 1, nextLine, 1);
+				builder.addEditOperation(removeRange, null);
+			} else {
+				// (along with the preceding newline, so we don't need a special case for moving from the last line)
+				const prevLineLen = model.getLineMaxColumn(prevLine);
+				const removeRange = new Range(prevLine, prevLineLen, srcEndLine, srcEndLineLen);
+				builder.addEditOperation(removeRange, null);
+			}
 
-				let insertingText = movingLineText;
+			// Re-insert it
+			// (using a trailing newline so we don't need a special case for moving to the first line)
+			if (this._isMovingDown) {
+				const dstLine = this._batch.startLineNumber - 1;
+				const insertRange = new Range(dstLine, 1, dstLine, 1);
+				builder.addEditOperation(insertRange, '\n' + text);
+			} else {
+				const dstLine = this._batch.endLineNumberExclusive;
+				const insertRange = new Range(dstLine, 1, dstLine, 1);
+				builder.addEditOperation(insertRange, text + '\n');
+			}
 
-				if (this.shouldAutoIndent(model, s)) {
-					const movingLineMatchResult = this.matchEnterRule(model, indentConverter, tabSize, movingLineNumber, s.startLineNumber - 1);
-					// if s.startLineNumber - 1 matches onEnter rule, we still honor that.
-					if (movingLineMatchResult !== null) {
-						const oldIndentation = strings.getLeadingWhitespace(model.getLineContent(movingLineNumber));
-						const newSpaceCnt = movingLineMatchResult + indentUtils.getSpaceCnt(oldIndentation, tabSize);
-						const newIndentation = indentUtils.generateIndent(newSpaceCnt, tabSize, insertSpaces);
-						insertingText = newIndentation + this.trimLeft(movingLineText);
-					} else {
-						// no enter rule matches, let's check indentatin rules then.
-						virtualModel.getLineContent = (lineNumber: number) => {
-							if (lineNumber === s.startLineNumber) {
-								return model.getLineContent(movingLineNumber);
-							} else {
-								return model.getLineContent(lineNumber);
-							}
-						};
-						const indentOfMovingLine = getGoodIndentForLine(
-							this._autoIndent,
-							virtualModel,
-							model.getLanguageIdAtPosition(movingLineNumber, 1),
-							s.startLineNumber,
-							indentConverter,
-							this._languageConfigurationService
-						);
-						if (indentOfMovingLine !== null) {
-							const oldIndentation = strings.getLeadingWhitespace(model.getLineContent(movingLineNumber));
-							const newSpaceCnt = indentUtils.getSpaceCnt(indentOfMovingLine, tabSize);
-							const oldSpaceCnt = indentUtils.getSpaceCnt(oldIndentation, tabSize);
-							if (newSpaceCnt !== oldSpaceCnt) {
-								const newIndentation = indentUtils.generateIndent(newSpaceCnt, tabSize, insertSpaces);
-								insertingText = newIndentation + this.trimLeft(movingLineText);
-							}
-						}
-					}
+			// TODO: Handle moving past a line that is actually multiple lines folded into one
 
-					// add edit operations for moving line first to make sure it's executed after we make indentation change
-					// to s.startLineNumber
-					builder.addEditOperation(new Range(s.startLineNumber, 1, s.startLineNumber, 1), insertingText + '\n');
+			// Re-indent the moved lines and the line they moved past
+			if (this.shouldAutoIndent(model, s)) {
+				let matchedOnEnterRule = false;
 
-					const ret = this.matchEnterRuleMovingDown(model, indentConverter, tabSize, s.startLineNumber, movingLineNumber, insertingText);
-
-					// check if the line being moved before matches onEnter rules, if so let's adjust the indentation by onEnter rules.
+				// Attempt to indent based on onEnter rules
+				if (this._isMovingDown) {
+					const ret = this.matchEnterRuleMovingDown(model, indentConverter, tabSize, srcStartLine, nextLine, text);
 					if (ret !== null) {
+						matchedOnEnterRule = true;
 						if (ret !== 0) {
 							this.getIndentEditsOfMovingBlock(model, builder, s, tabSize, insertSpaces, ret);
 						}
-					} else {
-						// it doesn't match onEnter rules, let's check indentation rules then.
-						virtualModel.getLineContent = (lineNumber: number) => {
-							if (lineNumber === s.startLineNumber) {
-								return insertingText;
-							} else if (lineNumber >= s.startLineNumber + 1 && lineNumber <= s.endLineNumber + 1) {
+					}
+				} else {
+					const ret = this.matchEnterRuleMoveingUp(model, indentConverter, tabSize, srcStartLine, prevLine, text);
+					if (ret !== null) {
+						matchedOnEnterRule = true;
+						if (ret !== 0) {
+							this.getIndentEditsOfMovingBlock(model, builder, s, tabSize, insertSpaces, ret);
+						}
+					}
+				}
+
+				// If no onEnter rule matched we'll check indentation rules
+				if (!matchedOnEnterRule) {
+
+					// NOTE: Given a line number from before the change return the line content after the change
+					virtualModel.getLineContent = (lineNumber: number) => {
+						if (this._isMovingDown) {
+							if (lineNumber === srcStartLine) {
+								return model.getLineContent(nextLine);
+							} else if (lineNumber <= nextLine) {
+								return model.getLineContent(lineNumber + 1);
+							} else {
+								return model.getLineContent(lineNumber);
+							}
+						} else {
+							if (lineNumber === srcEndLine) {
+								return model.getLineContent(prevLine);
+							} else if (lineNumber >= prevLine) {
 								return model.getLineContent(lineNumber - 1);
 							} else {
 								return model.getLineContent(lineNumber);
 							}
-						};
+						}
+					};
 
-						const newIndentatOfMovingBlock = getGoodIndentForLine(
+					// 'affected' denotes all modified lines - the moved lines plus the line they are being moved past
+					// 'adjacent' denoates the line that isn't being moved, but is being moved past
+					const affectedStartLine = this._isMovingDown ? srcStartLine : prevLine;
+					const affectedEndLine = this._isMovingDown ? nextLine : srcEndLine;
+					//const adjacentLine = this._isMovingDown ? nextLine : prevLine;
+
+					for (let i = affectedStartLine; i <= affectedEndLine; i++) {
+						const lineIndent = getGoodIndentForLine(
 							this._autoIndent,
 							virtualModel,
-							model.getLanguageIdAtPosition(movingLineNumber, 1),
-							s.startLineNumber + 1,
+							model.getLanguageIdAtPosition(i, 1),
+							i,
 							indentConverter,
 							this._languageConfigurationService
 						);
-
-						if (newIndentatOfMovingBlock !== null) {
-							const oldIndentation = strings.getLeadingWhitespace(model.getLineContent(s.startLineNumber));
-							const newSpaceCnt = indentUtils.getSpaceCnt(newIndentatOfMovingBlock, tabSize);
-							const oldSpaceCnt = indentUtils.getSpaceCnt(oldIndentation, tabSize);
+						if (lineIndent !== null) {
+							// adjust the indentation of the moving block
+							const oldIndent = strings.getLeadingWhitespace(virtualModel.getLineContent(i));
+							const newSpaceCnt = indentUtils.getSpaceCnt(lineIndent, tabSize);
+							const oldSpaceCnt = indentUtils.getSpaceCnt(oldIndent, tabSize);
 							if (newSpaceCnt !== oldSpaceCnt) {
 								const spaceCntOffset = newSpaceCnt - oldSpaceCnt;
-
 								this.getIndentEditsOfMovingBlock(model, builder, s, tabSize, insertSpaces, spaceCntOffset);
 							}
 						}
 					}
-				} else {
-					// Insert line that needs to be moved before
-					builder.addEditOperation(new Range(s.startLineNumber, 1, s.startLineNumber, 1), insertingText + '\n');
-				}
-
-			} else {
-
-				if (this._isFirstInBatch) {
-					movingLineNumber = s.startLineNumber - 1;
-
-					// Grab the text that needs to be moved
-					// (without a leading or trailing newline)
-					const srcStartLine = this._batch.startLineNumber;
-					const srcEndLine = this._batch.endLineNumberExclusive - 1;
-					const srcEndLineLen = model.getLineMaxColumn(srcEndLine);
-					const textRange = new Range(srcStartLine, 1, srcEndLine, srcEndLineLen);
-					const text = model.getValueInRange(textRange);
-
-					// Remove it
-					// (along with the preceding newline, so we don't need a special case for moving from the last line)
-					const prevLine = this._batch.startLineNumber - 1;
-					const prevLineLen = model.getLineMaxColumn(prevLine);
-					const removeRange = new Range(prevLine, prevLineLen, srcEndLine, srcEndLineLen);
-					builder.addEditOperation(removeRange, null);
-
-					// Re-insert it
-					// (using a trailing newline so we don't need a special case for moving to the first line)
-					const dstLine = this._batch.startLineNumber - 1;
-					const insertRange = new Range(dstLine, 1, dstLine, 1);
-					builder.addEditOperation(insertRange, text + '\n');
-
-					if (this.shouldAutoIndent(model, s)) {
-						virtualModel.getLineContent = (lineNumber: number) => {
-							if (lineNumber === movingLineNumber) {
-								return model.getLineContent(s.startLineNumber);
-							} else {
-								return model.getLineContent(lineNumber);
-							}
-						};
-
-						const ret = this.matchEnterRule(model, indentConverter, tabSize, s.startLineNumber, s.startLineNumber - 2);
-						// check if s.startLineNumber - 2 matches onEnter rules, if so adjust the moving block by onEnter rules.
-						if (ret !== null) {
-							if (ret !== 0) {
-								this.getIndentEditsOfMovingBlock(model, builder, s, tabSize, insertSpaces, ret);
-							}
-						} else {
-							// it doesn't match any onEnter rule, let's check indentation rules then.
-							const indentOfFirstLine = getGoodIndentForLine(
-								this._autoIndent,
-								virtualModel,
-								model.getLanguageIdAtPosition(s.startLineNumber, 1),
-								movingLineNumber,
-								indentConverter,
-								this._languageConfigurationService
-							);
-							if (indentOfFirstLine !== null) {
-								// adjust the indentation of the moving block
-								const oldIndent = strings.getLeadingWhitespace(model.getLineContent(s.startLineNumber));
-								const newSpaceCnt = indentUtils.getSpaceCnt(indentOfFirstLine, tabSize);
-								const oldSpaceCnt = indentUtils.getSpaceCnt(oldIndent, tabSize);
-								if (newSpaceCnt !== oldSpaceCnt) {
-									const spaceCntOffset = newSpaceCnt - oldSpaceCnt;
-
-									this.getIndentEditsOfMovingBlock(model, builder, s, tabSize, insertSpaces, spaceCntOffset);
-								}
-							}
-						}
-					}
-				} else {
-					// No-op so we still get a chance to update our cursor position
-					builder.addEditOperation(new Range(1, 1, 1, 1), null);
 				}
 			}
+		} else {
+			// TODO: Ensure this can't get filtered
+			// No-op so we still get a chance to update our cursor position
+			builder.addEditOperation(new Range(1, 1, 1, 1), null);
 		}
-
-		this._selectionId = builder.trackSelection(s);
 	}
 
 	private buildIndentConverter(tabSize: number, indentSize: number, insertSpaces: boolean): IIndentConverter {
@@ -316,20 +245,10 @@ export class MoveLinesCommand implements ICommand {
 		return null;
 	}
 
-	/**
-	 *
-	 * @param model
-	 * @param indentConverter
-	 * @param tabSize
-	 * @param line the line moving down
-	 * @param futureAboveLineNumber the line which will be at the `line` position
-	 * @param futureAboveLineText
-	 */
-	private matchEnterRuleMovingDown(model: ITextModel, indentConverter: IIndentConverter, tabSize: number, line: number, futureAboveLineNumber: number, futureAboveLineText: string) {
-		if (strings.lastNonWhitespaceIndex(futureAboveLineText) >= 0) {
-			// break
-			const maxColumn = model.getLineMaxColumn(futureAboveLineNumber);
-			const enter = getEnterAction(this._autoIndent, model, new Range(futureAboveLineNumber, maxColumn, futureAboveLineNumber, maxColumn), this._languageConfigurationService);
+	private matchEnterRuleMovingDown(model: ITextModel, indentConverter: IIndentConverter, tabSize: number, line: number, nextLine: number, nextLineText: string) {
+		if (strings.lastNonWhitespaceIndex(nextLineText) >= 0) {
+			const maxColumn = model.getLineMaxColumn(nextLine);
+			const enter = getEnterAction(this._autoIndent, model, new Range(nextLine, maxColumn, nextLine, maxColumn), this._languageConfigurationService);
 			return this.parseEnterResult(model, indentConverter, tabSize, line, enter);
 		} else {
 			// go upwards, starting from `line - 1`
@@ -355,17 +274,19 @@ export class MoveLinesCommand implements ICommand {
 		}
 	}
 
-	private matchEnterRule(model: ITextModel, indentConverter: IIndentConverter, tabSize: number, line: number, oneLineAbove: number, previousLineText?: string) {
-		let validPrecedingLine = oneLineAbove;
+	private matchEnterRuleMoveingUp(model: ITextModel, indentConverter: IIndentConverter, tabSize: number, line: number, prevLine: number, prevLineText: string) {
+		let validPrecedingLine = prevLine;
 		while (validPrecedingLine >= 1) {
-			// ship empty lines as empty lines just inherit indentation
+			// skip empty lines as empty lines just inherit indentation
 			let lineContent;
-			if (validPrecedingLine === oneLineAbove && previousLineText !== undefined) {
-				lineContent = previousLineText;
+			if (validPrecedingLine === prevLine) {
+				lineContent = prevLineText;
 			} else {
 				lineContent = model.getLineContent(validPrecedingLine);
 			}
 
+			// TODO: I bet this gets confused by whitespace only lines with incorrect indentation
+			// TODO: I bet this is weird for languages without braces like Python
 			const nonWhitespaceIdx = strings.lastNonWhitespaceIndex(lineContent);
 			if (nonWhitespaceIdx >= 0) {
 				break;
@@ -431,10 +352,6 @@ export class MoveLinesCommand implements ICommand {
 
 	public computeCursorState(model: ITextModel, helper: ICursorStateComputerData): Selection {
 		let result = helper.getTrackedSelection(this._selectionId!);
-
-		if (this._moveEndPositionDown) {
-			result = result.setEndPosition(result.endLineNumber + 1, 1);
-		}
 
 		if (this._moveEndLineSelectionShrink && result.startLineNumber < result.endLineNumber) {
 			result = result.setEndPosition(result.endLineNumber, 2);
