@@ -63,7 +63,7 @@ export class MoveLinesCommand implements ICommand {
 		}
 
 		const s = this._selection;
-		builder.trackSelection(s);
+		//builder.trackSelection(s);
 
 		const { tabSize, indentSize, insertSpaces } = model.getOptions();
 		const indentConverter = this.buildIndentConverter(tabSize, indentSize, insertSpaces);
@@ -89,40 +89,35 @@ export class MoveLinesCommand implements ICommand {
 			const srcEndLine = this._batch.endLineNumberExclusive - 1;
 			const srcEndLineLen = model.getLineMaxColumn(srcEndLine);
 			const textRange = new Range(srcStartLine, 1, srcEndLine, srcEndLineLen);
-			const text = model.getValueInRange(textRange);
+			let text = model.getValueInRange(textRange);
 
 			// TODO: It's probably equivalent to special case first and last line as opposed to up vs down. Does that make
 			// it simpler to grab the text?
 			const prevLine = this._batch.startLineNumber - 1;
 			const nextLine = this._batch.endLineNumberExclusive;
 
-			// Remove it
-			if (this._isMovingDown) {
-				// (along with the proceeding newline, so we don't need a special case for moving from the first line)
-				const removeRange = new Range(srcStartLine, 1, nextLine, 1);
-				builder.addEditOperation(removeRange, null);
-			} else {
-				// (along with the preceding newline, so we don't need a special case for moving from the last line)
-				const prevLineLen = model.getLineMaxColumn(prevLine);
-				const removeRange = new Range(prevLine, prevLineLen, srcEndLine, srcEndLineLen);
-				builder.addEditOperation(removeRange, null);
-			}
-
-			// Re-insert it
-			// (using a trailing newline so we don't need a special case for moving to the first line)
-			if (this._isMovingDown) {
-				const dstLine = this._batch.startLineNumber - 1;
-				const insertRange = new Range(dstLine, 1, dstLine, 1);
-				builder.addEditOperation(insertRange, '\n' + text);
-			} else {
-				const dstLine = this._batch.endLineNumberExclusive;
-				const insertRange = new Range(dstLine, 1, dstLine, 1);
-				builder.addEditOperation(insertRange, text + '\n');
-			}
+			const affectedStartLine = this._isMovingDown ? srcStartLine : prevLine;
+			const affectedEndLine = this._isMovingDown ? nextLine : srcEndLine;
+			const affectedEndLineLen = model.getLineMaxColumn(affectedEndLine); // TODO: Duplicate work
+			//const adjacentLine = this._isMovingDown ? nextLine : prevLine;
 
 			// TODO: Handle moving past a line that is actually multiple lines folded into one
+			// TODO: Put this whole thing in a loop, not just the indent portion
+			// TODO: Split handling of the moved block and the adjacent line
 
-			// Re-indent the moved lines and the line they moved past
+			// NOTE: 2 general approaches here:
+			// 1) Pick up all lines, modify them, put them down
+			//    - How do we update cursor positions with this approach? We don't know how the indentation changed
+			// 2) Pick up the adjacent line, modify it, put it down, edit remaining lines
+			//    - This allows each line to edit themselves
+			//    - This is maybe more efficient?
+			//    - How do we update cursor position with this approach?
+			//    - How do cursors know about hte new indentation of
+
+			// 'affected' denotes all modified lines - the moved lines plus the line they are being moved past
+			// 'adjacent' denotes the line that isn't being moved directly, but is being moved past
+
+			// Re-indent all affected lines
 			if (this.shouldAutoIndent(model, s)) {
 				let matchedOnEnterRule = false;
 
@@ -148,59 +143,96 @@ export class MoveLinesCommand implements ICommand {
 				// If no onEnter rule matched we'll check indentation rules
 				if (!matchedOnEnterRule) {
 
-					// NOTE: Given a line number from before the change return the line content after the change
+					// TODO: This needs to reflect changing line content as we indent it
+					// Given a line number return the line content as it will be after the move
 					virtualModel.getLineContent = (lineNumber: number) => {
 						if (this._isMovingDown) {
 							if (lineNumber === srcStartLine) {
 								return model.getLineContent(nextLine);
-							} else if (lineNumber <= nextLine) {
-								return model.getLineContent(lineNumber + 1);
+							} else if (lineNumber > srcStartLine && lineNumber <= nextLine) {
+								return model.getLineContent(lineNumber - 1);
 							} else {
 								return model.getLineContent(lineNumber);
 							}
 						} else {
 							if (lineNumber === srcEndLine) {
 								return model.getLineContent(prevLine);
-							} else if (lineNumber >= prevLine) {
-								return model.getLineContent(lineNumber - 1);
+							} else if (lineNumber >= prevLine && lineNumber < srcEndLine) {
+								return model.getLineContent(lineNumber + 1);
 							} else {
 								return model.getLineContent(lineNumber);
 							}
 						}
 					};
 
-					// 'affected' denotes all modified lines - the moved lines plus the line they are being moved past
-					// 'adjacent' denoates the line that isn't being moved, but is being moved past
-					const affectedStartLine = this._isMovingDown ? srcStartLine : prevLine;
-					const affectedEndLine = this._isMovingDown ? nextLine : srcEndLine;
-					//const adjacentLine = this._isMovingDown ? nextLine : prevLine;
+					const reindentedText = [];
 
 					for (let i = affectedStartLine; i <= affectedEndLine; i++) {
+						const oldLineContent = virtualModel.getLineContent(i);
+						reindentedText.push(oldLineContent);
+
+						// TODO: Doesn't work when moving up above a scope
+						// TODO: Very wrong when moving a brace
+
+						// TODO: What does this return?
 						const lineIndent = getGoodIndentForLine(
 							this._autoIndent,
 							virtualModel,
+							// TODO: Should most likely be using the virtualModel
 							model.getLanguageIdAtPosition(i, 1),
 							i,
 							indentConverter,
 							this._languageConfigurationService
 						);
 						if (lineIndent !== null) {
-							// adjust the indentation of the moving block
-							const oldIndent = strings.getLeadingWhitespace(virtualModel.getLineContent(i));
+							const oldIndent = strings.getLeadingWhitespace(oldLineContent);
 							const newSpaceCnt = indentUtils.getSpaceCnt(lineIndent, tabSize);
 							const oldSpaceCnt = indentUtils.getSpaceCnt(oldIndent, tabSize);
 							if (newSpaceCnt !== oldSpaceCnt) {
-								const spaceCntOffset = newSpaceCnt - oldSpaceCnt;
-								this.getIndentEditsOfMovingBlock(model, builder, s, tabSize, insertSpaces, spaceCntOffset);
+								const newIndent = indentUtils.generateIndent(newSpaceCnt, tabSize, insertSpaces);
+								const newLineContent = newIndent + oldLineContent.substring(oldIndent.length);
+								console.log('indent changed (%i) old: \"%s\"; new: \"%s\"', i, oldLineContent, newLineContent);
+								reindentedText[i] = newLineContent;
 							}
 						}
 					}
+
+					text = reindentedText.join('\n');
 				}
+
+				// Remove it
+				if (this._isMovingDown) {
+					// (along with the proceeding newline, so we don't need a special case for moving from the first line)
+					//const removeRange = new Range(srcStartLine, 1, nextLine, 1);
+					const removeRange = new Range(affectedStartLine, 1, affectedEndLine, affectedEndLineLen);
+					builder.addEditOperation(removeRange, null);
+				} else {
+					// (along with the preceding newline, so we don't need a special case for moving from the last line)
+					const prevLineLen = model.getLineMaxColumn(prevLine);
+					//const removeRange = new Range(prevLine, prevLineLen, srcEndLine, srcEndLineLen);
+					const removeRange = new Range(affectedStartLine, 1, affectedEndLine, affectedEndLineLen);
+					builder.addEditOperation(removeRange, null);
+				}
+
+				// Re-insert it
+				// (using a trailing newline so we don't need a special case for moving to the first line)
+				if (this._isMovingDown) {
+					const dstLine = nextLine;
+					const dstLineLen = model.getLineMaxColumn(dstLine);
+					const insertRange = new Range(dstLine, dstLineLen, dstLine, dstLineLen);
+					//builder.addEditOperation(insertRange, '\n' + text);
+					builder.addEditOperation(insertRange, text);
+				} else {
+					const dstLine = prevLine;
+					const insertRange = new Range(dstLine, 1, dstLine, 1);
+					//builder.addEditOperation(insertRange, text + '\n');
+					builder.addEditOperation(insertRange, text);
+				}
+			} else {
+				// TODO: Ensure this can't get filtered
+				// No-op so we still get a chance to update our cursor position
+				builder.addEditOperation(new Range(1, 1, 1, 1), null);
 			}
-		} else {
-			// TODO: Ensure this can't get filtered
-			// No-op so we still get a chance to update our cursor position
-			builder.addEditOperation(new Range(1, 1, 1, 1), null);
 		}
 	}
 
@@ -346,20 +378,22 @@ export class MoveLinesCommand implements ICommand {
 					this._moveEndLineSelectionShrink = true;
 				}
 			}
-
 		}
 	}
 
 	public computeCursorState(model: ITextModel, helper: ICursorStateComputerData): Selection {
+		// TODO: Re-implement this
+		/*
 		let result = helper.getTrackedSelection(this._selectionId!);
 
 		if (this._moveEndLineSelectionShrink && result.startLineNumber < result.endLineNumber) {
 			result = result.setEndPosition(result.endLineNumber, 2);
 		}
+		*/
 
 		const offset = this._isMovingDown ? 1 : -1;
-		result = this._selection;
-		result = new Selection(result.startLineNumber + offset, result.startColumn, result.endLineNumber + offset, result.endColumn);
+		const s = this._selection;
+		const result = new Selection(s.startLineNumber + offset, s.startColumn, s.endLineNumber + offset, s.endColumn);
 
 		return result;
 	}
