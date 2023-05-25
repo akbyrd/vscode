@@ -48,81 +48,139 @@ export class MoveLinesCommand implements ICommand {
 
 	public getEditOperations(model: ITextModel, builder: IEditOperationBuilder): void {
 
-		const modelLineCount = model.getLineCount();
+		// TODO: Remove this
+		const s = this._selection;
+		//this._selectionId = builder.trackSelection(s);
+		const isMovingDown = this._isMovingDown;
+
+		if (!this._isFirstInBatch) {
+			// TODO: Ensure this can't get filtered
+			// No-op so we still get a chance to update our cursor position
+			builder.addEditOperation(new Range(1, 1, 1, 1), null);
+			return;
+		}
 
 		// Moving down but selection is at the end of the document, nothing to do
-		if (this._isMovingDown && this._batch.endLineNumberExclusive - 1 === modelLineCount) {
-			this._selectionId = builder.trackSelection(this._selection);
+		if (isMovingDown && this._batch.endLineNumberExclusive - 1 === model.getLineCount()) {
 			return;
 		}
 
 		// Moving up but selection is at the beginning of the document, nothing to do
-		if (!this._isMovingDown && this._batch.startLineNumber === 1) {
-			this._selectionId = builder.trackSelection(this._selection);
+		if (!isMovingDown && this._batch.startLineNumber === 1) {
 			return;
 		}
 
-		const s = this._selection;
-		//builder.trackSelection(s);
+		// In order for this command to work properly we need to know about adjacent cursors.
+		// * Edit operations are not allowed to overlap and when we have adjacent cursors their edits invariably end up
+		//   overlapping. Consider lines 2 and 3 have a cursor and we want to move those lines up up. When line 2 is
+		//   processed Line 1 is removed and reinserted below 2. When line 3 is processed we try to remove line 2 and
+		//   reinsert it below 3. Since line 2 already has pending edits this is rejected and the second cursor is
+		//   removed.
+		// * When re-indenting lines after a move we look at the indentation of the previous line. If the previous line
+		//   was also moved and got reindented we need to see the new indentation in order to make the right decision
+		//   about our own indentation.
 
-		const { tabSize, indentSize, insertSpaces } = model.getOptions();
-		const indentConverter = this.buildIndentConverter(tabSize, indentSize, insertSpaces);
-		const virtualModel: IVirtualModel = {
-			tokenization: {
-				getLineTokens: (lineNumber: number) => {
-					return model.tokenization.getLineTokens(lineNumber);
+		// TODO: Maybe moving only the adjacent line is better?
+		// * Can re-indent all other lines in-place
+		// * Cursors should be updated automatically
+
+		// TODO: Pick up all affected lines, modify them, put them down
+		// * Don't have to handle first and last lines specially
+		// * Simplest implementation
+		// * A lot more work overall (if we're not re-indenting)
+		// * Need shared state to update cursor positions (due to indentation changes)
+
+		// TODO: I'm assuming an ICommand is not the right place to implement this. There must be tools have a broader
+		// view of the document
+
+		// TODO: It's probably equivalent to special case first and last line as opposed to up vs down. Does that make
+		// it simpler to grab the text?
+
+		const srcStartLine = this._batch.startLineNumber;
+		const srcEndLine = this._batch.endLineNumberExclusive - 1;
+
+		const prevLine = srcStartLine - 1;
+		const nextLine = srcEndLine + 1;
+
+		const affectedStartLine = isMovingDown ? srcStartLine : prevLine;
+		const affectedEndLine = isMovingDown ? nextLine : srcEndLine;
+		const affectedEndLineLen = model.getLineMaxColumn(affectedEndLine);
+		const replaceRange = new Range(affectedStartLine, 1, affectedEndLine, affectedEndLineLen);
+
+		// TODO: I'm undecided about gathering all lines in an array.
+		// On one hand it's wasteful if we're not reindenting
+		// On the other we *have* to do it when reindenting because we need to see the re-indented state of previous lines
+		const affectedLines = new Array<string>();
+		if (isMovingDown) {
+			affectedLines.push(model.getLineContent(nextLine));
+			for (let i = srcStartLine; i <= srcEndLine; i++) {
+				affectedLines.push(model.getLineContent(i));
+			}
+		} else {
+			for (let i = srcStartLine; i <= srcEndLine; i++) {
+				affectedLines.push(model.getLineContent(i));
+			}
+			affectedLines.push(model.getLineContent(prevLine));
+		}
+
+		// Re-indent all affected lines
+		if (this.shouldAutoIndent(model, s)) {
+
+			const { tabSize, indentSize, insertSpaces } = model.getOptions();
+			const indentConverter = this.buildIndentConverter(tabSize, indentSize, insertSpaces);
+
+			// TODO: Move this into virtualModel
+			function convertLineNumber(lineNumber: number) {
+				if (isMovingDown) {
+					if (lineNumber === srcStartLine) {
+						return nextLine;
+					} else if (lineNumber > srcStartLine && lineNumber <= nextLine) {
+						return lineNumber - 1;
+					}
+				} else {
+					if (lineNumber === srcEndLine) {
+						return prevLine;
+					} else if (lineNumber >= prevLine && lineNumber < srcEndLine) {
+						return lineNumber + 1;
+					}
+				}
+				return lineNumber;
+			}
+
+			const virtualModel: IVirtualModel = {
+				tokenization: {
+					// TODO: This will be wrong after re-indenting. Consider tokenizeLineWithEdit
+					getLineTokens: (lineNumber: number) => {
+						lineNumber = convertLineNumber(lineNumber);
+						return model.tokenization.getLineTokens(lineNumber);
+					},
+					getLanguageId: () => {
+						return model.getLanguageId();
+					},
+					getLanguageIdAtPosition: (lineNumber: number, column: number) => {
+						lineNumber = convertLineNumber(lineNumber);
+						return model.getLanguageIdAtPosition(lineNumber, column);
+					},
 				},
-				getLanguageId: () => {
-					return model.getLanguageId();
+				getLineContent: (lineNumber: number) => {
+					if (lineNumber >= affectedStartLine && lineNumber <= affectedEndLine) {
+						return affectedLines[lineNumber - affectedStartLine];
+					} else {
+						return model.getLineContent(lineNumber);
+					}
 				},
-				getLanguageIdAtPosition: (lineNumber: number, column: number) => {
-					return model.getLanguageIdAtPosition(lineNumber, column);
-				},
-			},
-			getLineContent: null as unknown as (lineNumber: number) => string,
-		};
+			};
 
-		if (this._isFirstInBatch) {
-			// Grab the text that needs to be moved
-			// (without a leading or trailing newline)
-			const srcStartLine = this._batch.startLineNumber;
-			const srcEndLine = this._batch.endLineNumberExclusive - 1;
-			const srcEndLineLen = model.getLineMaxColumn(srcEndLine);
-			const textRange = new Range(srcStartLine, 1, srcEndLine, srcEndLineLen);
-			let text = model.getValueInRange(textRange);
+			for (let i = affectedStartLine; i <= affectedEndLine; i++) {
+				const affectedLineIndex = i - affectedStartLine;
+				const oldLineContent = affectedLines[affectedLineIndex];
 
-			// TODO: It's probably equivalent to special case first and last line as opposed to up vs down. Does that make
-			// it simpler to grab the text?
-			const prevLine = this._batch.startLineNumber - 1;
-			const nextLine = this._batch.endLineNumberExclusive;
-
-			const affectedStartLine = this._isMovingDown ? srcStartLine : prevLine;
-			const affectedEndLine = this._isMovingDown ? nextLine : srcEndLine;
-			const affectedEndLineLen = model.getLineMaxColumn(affectedEndLine); // TODO: Duplicate work
-			//const adjacentLine = this._isMovingDown ? nextLine : prevLine;
-
-			// TODO: Handle moving past a line that is actually multiple lines folded into one
-			// TODO: Put this whole thing in a loop, not just the indent portion
-			// TODO: Split handling of the moved block and the adjacent line
-
-			// NOTE: 2 general approaches here:
-			// 1) Pick up all lines, modify them, put them down
-			//    - How do we update cursor positions with this approach? We don't know how the indentation changed
-			// 2) Pick up the adjacent line, modify it, put it down, edit remaining lines
-			//    - This allows each line to edit themselves
-			//    - This is maybe more efficient?
-			//    - How do we update cursor position with this approach?
-			//    - How do cursors know about hte new indentation of
-
-			// 'affected' denotes all modified lines - the moved lines plus the line they are being moved past
-			// 'adjacent' denotes the line that isn't being moved directly, but is being moved past
-
-			// Re-indent all affected lines
-			if (this.shouldAutoIndent(model, s)) {
-				let matchedOnEnterRule = false;
+				const matchedOnEnterRule = false;
 
 				// Attempt to indent based on onEnter rules
-				if (this._isMovingDown) {
+				/*
+				let matchedOnEnterRule = false;
+				if (isMovingDown) {
 					const ret = this.matchEnterRuleMovingDown(model, indentConverter, tabSize, srcStartLine, nextLine, text);
 					if (ret !== null) {
 						matchedOnEnterRule = true;
@@ -139,101 +197,37 @@ export class MoveLinesCommand implements ICommand {
 						}
 					}
 				}
+				*/
 
 				// If no onEnter rule matched we'll check indentation rules
 				if (!matchedOnEnterRule) {
 
-					// TODO: This needs to reflect changing line content as we indent it
-					// Given a line number return the line content as it will be after the move
-					virtualModel.getLineContent = (lineNumber: number) => {
-						if (this._isMovingDown) {
-							if (lineNumber === srcStartLine) {
-								return model.getLineContent(nextLine);
-							} else if (lineNumber > srcStartLine && lineNumber <= nextLine) {
-								return model.getLineContent(lineNumber - 1);
-							} else {
-								return model.getLineContent(lineNumber);
-							}
-						} else {
-							if (lineNumber === srcEndLine) {
-								return model.getLineContent(prevLine);
-							} else if (lineNumber >= prevLine && lineNumber < srcEndLine) {
-								return model.getLineContent(lineNumber + 1);
-							} else {
-								return model.getLineContent(lineNumber);
-							}
-						}
-					};
-
-					const reindentedText = [];
-
-					for (let i = affectedStartLine; i <= affectedEndLine; i++) {
-						const oldLineContent = virtualModel.getLineContent(i);
-						reindentedText.push(oldLineContent);
-
-						// TODO: Doesn't work when moving up above a scope
-						// TODO: Very wrong when moving a brace
-
-						// TODO: What does this return?
-						const lineIndent = getGoodIndentForLine(
-							this._autoIndent,
-							virtualModel,
-							// TODO: Should most likely be using the virtualModel
-							model.getLanguageIdAtPosition(i, 1),
-							i,
-							indentConverter,
-							this._languageConfigurationService
-						);
-						if (lineIndent !== null) {
-							const oldIndent = strings.getLeadingWhitespace(oldLineContent);
-							const newSpaceCnt = indentUtils.getSpaceCnt(lineIndent, tabSize);
-							const oldSpaceCnt = indentUtils.getSpaceCnt(oldIndent, tabSize);
-							if (newSpaceCnt !== oldSpaceCnt) {
-								const newIndent = indentUtils.generateIndent(newSpaceCnt, tabSize, insertSpaces);
-								const newLineContent = newIndent + oldLineContent.substring(oldIndent.length);
-								console.log('indent changed (%i) old: \"%s\"; new: \"%s\"', i, oldLineContent, newLineContent);
-								reindentedText[i] = newLineContent;
-							}
+					const languageId = virtualModel.tokenization.getLanguageIdAtPosition(i, 1);
+					const lineIndent = getGoodIndentForLine(
+						this._autoIndent,
+						virtualModel,
+						languageId,
+						i,
+						indentConverter,
+						this._languageConfigurationService
+					);
+					if (lineIndent !== null) {
+						const oldIndent = strings.getLeadingWhitespace(oldLineContent);
+						const newSpaceCnt = indentUtils.getSpaceCnt(lineIndent, tabSize);
+						const oldSpaceCnt = indentUtils.getSpaceCnt(oldIndent, tabSize);
+						if (newSpaceCnt !== oldSpaceCnt) {
+							const newIndent = indentUtils.generateIndent(newSpaceCnt, tabSize, insertSpaces);
+							const newLineContent = newIndent + oldLineContent.substring(oldIndent.length);
+							console.log('indent changed (%i) old: \"%s\"; new: \"%s\"', i, oldLineContent, newLineContent);
+							affectedLines[affectedLineIndex] = newLineContent;
 						}
 					}
-
-					text = reindentedText.join('\n');
 				}
-
-				// Remove it
-				if (this._isMovingDown) {
-					// (along with the proceeding newline, so we don't need a special case for moving from the first line)
-					//const removeRange = new Range(srcStartLine, 1, nextLine, 1);
-					const removeRange = new Range(affectedStartLine, 1, affectedEndLine, affectedEndLineLen);
-					builder.addEditOperation(removeRange, null);
-				} else {
-					// (along with the preceding newline, so we don't need a special case for moving from the last line)
-					const prevLineLen = model.getLineMaxColumn(prevLine);
-					//const removeRange = new Range(prevLine, prevLineLen, srcEndLine, srcEndLineLen);
-					const removeRange = new Range(affectedStartLine, 1, affectedEndLine, affectedEndLineLen);
-					builder.addEditOperation(removeRange, null);
-				}
-
-				// Re-insert it
-				// (using a trailing newline so we don't need a special case for moving to the first line)
-				if (this._isMovingDown) {
-					const dstLine = nextLine;
-					const dstLineLen = model.getLineMaxColumn(dstLine);
-					const insertRange = new Range(dstLine, dstLineLen, dstLine, dstLineLen);
-					//builder.addEditOperation(insertRange, '\n' + text);
-					builder.addEditOperation(insertRange, text);
-				} else {
-					const dstLine = prevLine;
-					const insertRange = new Range(dstLine, 1, dstLine, 1);
-					//builder.addEditOperation(insertRange, text + '\n');
-					builder.addEditOperation(insertRange, text);
-				}
-			} else {
-				// TODO: Ensure this can't get filtered
-				// No-op so we still get a chance to update our cursor position
-				builder.addEditOperation(new Range(1, 1, 1, 1), null);
 			}
 		}
+
+		const text = affectedLines.join('\n');
+		builder.addEditOperation(replaceRange, text);
 	}
 
 	private buildIndentConverter(tabSize: number, indentSize: number, insertSpaces: boolean): IIndentConverter {
