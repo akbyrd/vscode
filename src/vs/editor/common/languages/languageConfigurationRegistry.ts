@@ -6,7 +6,7 @@
 import { Emitter, Event } from 'vs/base/common/event';
 import { Disposable, IDisposable, toDisposable } from 'vs/base/common/lifecycle';
 import * as strings from 'vs/base/common/strings';
-import { ITextModel } from 'vs/editor/common/model';
+import { IVirtualModel } from 'vs/editor/common/languages/autoIndent';
 import { DEFAULT_WORD_REGEXP, ensureValidWordDefinition } from 'vs/editor/common/core/wordHelper';
 import { EnterAction, FoldingRules, IAutoClosingPair, IndentationRule, LanguageConfiguration, AutoClosingPairs, CharacterPair, ExplicitLanguageConfiguration } from 'vs/editor/common/languages/languageConfiguration';
 import { createScopedLineTokens, ScopedLineTokens } from 'vs/editor/common/languages/supports';
@@ -172,7 +172,7 @@ function validateBracketPairs(data: unknown): CharacterPair[] | undefined {
 	}).filter((p): p is CharacterPair => !!p);
 }
 
-export function getIndentationAtPosition(model: ITextModel, lineNumber: number, column: number): string {
+export function getIndentationAtPosition(model: IVirtualModel, lineNumber: number, column: number): string {
 	const lineText = model.getLineContent(lineNumber);
 	let indentation = strings.getLeadingWhitespace(lineText);
 	if (indentation.length > column - 1) {
@@ -181,10 +181,16 @@ export function getIndentationAtPosition(model: ITextModel, lineNumber: number, 
 	return indentation;
 }
 
-export function getScopedLineTokens(model: ITextModel, lineNumber: number, columnNumber?: number): ScopedLineTokens {
-	model.tokenization.forceTokenization(lineNumber);
+//export function getScopedLineTokens(model: ITextModel, lineNumber: number, columnNumber?: number): ScopedLineTokens {
+//	model.tokenization.forceTokenization(lineNumber);
+//	const lineTokens = model.tokenization.getLineTokens(lineNumber);
+//	const column = (typeof columnNumber === 'undefined' ? model.getLineMaxColumn(lineNumber) - 1 : columnNumber - 1);
+//	return createScopedLineTokens(lineTokens, column);
+//}
+
+export function getScopedLineTokens(model: IVirtualModel, lineNumber: number, columnNumber?: number): ScopedLineTokens {
 	const lineTokens = model.tokenization.getLineTokens(lineNumber);
-	const column = (typeof columnNumber === 'undefined' ? model.getLineMaxColumn(lineNumber) - 1 : columnNumber - 1);
+	const column = (typeof columnNumber === 'undefined' ? model.getLineContent(lineNumber).length : columnNumber - 1);
 	return createScopedLineTokens(lineTokens, column);
 }
 

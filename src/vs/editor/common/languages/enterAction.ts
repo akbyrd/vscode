@@ -4,14 +4,14 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Range } from 'vs/editor/common/core/range';
-import { ITextModel } from 'vs/editor/common/model';
+import { IVirtualModel } from 'vs/editor/common/languages/autoIndent';
 import { IndentAction, CompleteEnterAction } from 'vs/editor/common/languages/languageConfiguration';
 import { EditorAutoIndentStrategy } from 'vs/editor/common/config/editorOptions';
 import { getIndentationAtPosition, getScopedLineTokens, ILanguageConfigurationService } from 'vs/editor/common/languages/languageConfigurationRegistry';
 
 export function getEnterAction(
 	autoIndent: EditorAutoIndentStrategy,
-	model: ITextModel,
+	model: IVirtualModel,
 	range: Range,
 	languageConfigurationService: ILanguageConfigurationService
 ): CompleteEnterAction | null {

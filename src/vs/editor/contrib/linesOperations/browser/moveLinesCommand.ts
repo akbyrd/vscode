@@ -221,6 +221,7 @@ export class MoveLinesCommand implements ICommand {
 		};
 	}
 
+	// TODO: Will this end up appending e.g. comment characters when moving past a comment?
 	private parseEnterResult(model: ITextModel, indentConverter: IIndentConverter, tabSize: number, line: number, enter: CompleteEnterAction | null) {
 		if (enter) {
 			let enterPrefix = enter.indentation;
@@ -251,7 +252,7 @@ export class MoveLinesCommand implements ICommand {
 		return null;
 	}
 
-	private matchEnterRuleMovingDown(model: ITextModel, indentConverter: IIndentConverter, tabSize: number, line: number, nextLine: number, nextLineText: string) {
+	private matchEnterRuleMovingDown(model: IVirtualModel, indentConverter: IIndentConverter, tabSize: number, line: number, nextLine: number, nextLineText: string) {
 		if (strings.lastNonWhitespaceIndex(nextLineText) >= 0) {
 			const maxColumn = model.getLineMaxColumn(nextLine);
 			const enter = getEnterAction(this._autoIndent, model, new Range(nextLine, maxColumn, nextLine, maxColumn), this._languageConfigurationService);
@@ -280,7 +281,7 @@ export class MoveLinesCommand implements ICommand {
 		}
 	}
 
-	private matchEnterRuleMoveingUp(model: ITextModel, indentConverter: IIndentConverter, tabSize: number, line: number, prevLine: number, prevLineText: string) {
+	private matchEnterRuleMoveingUp(model: IVirtualModel, indentConverter: IIndentConverter, tabSize: number, line: number, prevLine: number, prevLineText: string) {
 		let validPrecedingLine = prevLine;
 		while (validPrecedingLine >= 1) {
 			// skip empty lines as empty lines just inherit indentation
