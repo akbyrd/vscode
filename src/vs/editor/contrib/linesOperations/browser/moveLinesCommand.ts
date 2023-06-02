@@ -23,93 +23,71 @@ export class MoveLinesCommand implements ICommand {
 	private readonly _selection: Selection;
 	private readonly _isMovingDown: boolean;
 	private readonly _autoIndent: EditorAutoIndentStrategy;
-	private readonly _batch: LineRange;
-	private readonly _isFirstInBatch: boolean;
 
 	private _selectionId: string | null;
 	private _moveEndLineSelectionShrink: boolean;
 
 	constructor(
-		selections: Selection[],
+		selection: Selection,
 		isMovingDown: boolean,
 		autoIndent: EditorAutoIndentStrategy,
-		@ILanguageConfigurationService private readonly _languageConfigurationService: ILanguageConfigurationService,
-		batch: LineRange,
-		isFirstInBatch: boolean
+		@ILanguageConfigurationService private readonly _languageConfigurationService: ILanguageConfigurationService
 	) {
-		this._selection = selections[0];
+		this._selection = selection;
 		this._isMovingDown = isMovingDown;
 		this._autoIndent = autoIndent;
 		this._selectionId = null;
 		this._moveEndLineSelectionShrink = false;
-		this._batch = batch;
-		this._isFirstInBatch = isFirstInBatch;
 	}
 
 	public getEditOperations(model: ITextModel, builder: IEditOperationBuilder): void {
 
-		// TODO: Remove this
 		const s = this._selection;
-		//this._selectionId = builder.trackSelection(s);
 		const isMovingDown = this._isMovingDown;
 
-		if (!this._isFirstInBatch) {
-			// TODO: Ensure this can't get filtered
-			// No-op so we still get a chance to update our cursor position
-			builder.addEditOperation(new Range(1, 1, 1, 1), null);
-			return;
-		}
-
 		// Moving down but selection is at the end of the document, nothing to do
-		if (isMovingDown && this._batch.endLineNumberExclusive - 1 === model.getLineCount()) {
+		if (isMovingDown && s.endLineNumber === model.getLineCount()) {
 			return;
 		}
 
 		// Moving up but selection is at the beginning of the document, nothing to do
-		if (!isMovingDown && this._batch.startLineNumber === 1) {
+		if (!isMovingDown && s.startLineNumber === 1) {
 			return;
 		}
-
-		// In order for this command to work properly we need to know about adjacent cursors.
-		// * Edit operations are not allowed to overlap and when we have adjacent cursors their edits invariably end up
-		//   overlapping. Consider lines 2 and 3 have a cursor and we want to move those lines up up. When line 2 is
-		//   processed Line 1 is removed and reinserted below 2. When line 3 is processed we try to remove line 2 and
-		//   reinsert it below 3. Since line 2 already has pending edits this is rejected and the second cursor is
-		//   removed.
-		// * When re-indenting lines after a move we look at the indentation of the previous line. If the previous line
-		//   was also moved and got reindented we need to see the new indentation in order to make the right decision
-		//   about our own indentation.
-
-		// TODO: Maybe moving only the adjacent line is better?
-		// * Can re-indent all other lines in-place
-		// * Cursors should be updated automatically
-
-		// TODO: Pick up all affected lines, modify them, put them down
-		// * Don't have to handle first and last lines specially
-		// * Simplest implementation
-		// * A lot more work overall (if we're not re-indenting)
-		// * Need shared state to update cursor positions (due to indentation changes)
-
-		// TODO: I'm assuming an ICommand is not the right place to implement this. There must be tools have a broader
-		// view of the document
 
 		// TODO: It's probably equivalent to special case first and last line as opposed to up vs down. Does that make
 		// it simpler to grab the text?
 
-		const srcStartLine = this._batch.startLineNumber;
-		const srcEndLine = this._batch.endLineNumberExclusive - 1;
+		const srcStartLine = s.startLineNumber;
+		const srcEndLine = s.endLineNumber;
+		const srcEndLineLen = model.getLineMaxColumn(srcEndLine);
 
 		const prevLine = srcStartLine - 1;
 		const nextLine = srcEndLine + 1;
+		const nextLineLen = model.getLineMaxColumn(nextLine);
 
-		const affectedStartLine = isMovingDown ? srcStartLine : prevLine;
-		const affectedEndLine = isMovingDown ? nextLine : srcEndLine;
-		const affectedEndLineLen = model.getLineMaxColumn(affectedEndLine);
-		const replaceRange = new Range(affectedStartLine, 1, affectedEndLine, affectedEndLineLen);
+		//const affectedStartLine = isMovingDown ? srcStartLine : prevLine;
+		//const affectedEndLine = isMovingDown ? nextLine : srcEndLine;
+		//const affectedEndLineLen = model.getLineMaxColumn(affectedEndLine);
+		//const replaceRange = new Range(affectedStartLine, 1, affectedEndLine, affectedEndLineLen);
 
-		// TODO: I'm undecided about gathering all lines in an array.
-		// On one hand it's wasteful if we're not reindenting
-		// On the other we *have* to do it when reindenting because we need to see the re-indented state of previous lines
+		const removeRange = isMovingDown
+			? new Range(srcEndLine, srcEndLineLen, nextLine, nextLineLen)
+			: new Range(prevLine, 1, srcStartLine, 1);
+
+		const insertRange = isMovingDown
+			? new Range(srcStartLine, 1, srcStartLine, 1)
+			: new Range(srcEndLine, srcEndLineLen, srcEndLine, srcEndLineLen);
+
+		const movedText = isMovingDown
+			? model.getLineContent(nextLine) + '\n'
+			: '\n' + model.getLineContent(prevLine);
+
+		this._selectionId = builder.trackSelection(s);
+		builder.addEditOperation(removeRange, '');
+		builder.addEditOperation(insertRange, movedText);
+
+		/*
 		const affectedLines = new Array<string>();
 		if (isMovingDown) {
 			affectedLines.push(model.getLineContent(nextLine));
@@ -208,6 +186,7 @@ export class MoveLinesCommand implements ICommand {
 
 		const text = affectedLines.join('\n');
 		builder.addEditOperation(replaceRange, text);
+		*/
 	}
 
 	private buildIndentConverter(tabSize: number, indentSize: number, insertSpaces: boolean): IIndentConverter {
@@ -252,7 +231,7 @@ export class MoveLinesCommand implements ICommand {
 		return null;
 	}
 
-	private matchEnterRuleMovingDown(model: IVirtualModel, indentConverter: IIndentConverter, tabSize: number, line: number, nextLine: number, nextLineText: string) {
+	private matchEnterRuleMovingDown(model: ITextModel, indentConverter: IIndentConverter, tabSize: number, line: number, nextLine: number, nextLineText: string) {
 		if (strings.lastNonWhitespaceIndex(nextLineText) >= 0) {
 			const maxColumn = model.getLineMaxColumn(nextLine);
 			const enter = getEnterAction(this._autoIndent, model, new Range(nextLine, maxColumn, nextLine, maxColumn), this._languageConfigurationService);
@@ -281,7 +260,7 @@ export class MoveLinesCommand implements ICommand {
 		}
 	}
 
-	private matchEnterRuleMoveingUp(model: IVirtualModel, indentConverter: IIndentConverter, tabSize: number, line: number, prevLine: number, prevLineText: string) {
+	private matchEnterRuleMoveingUp(model: ITextModel, indentConverter: IIndentConverter, tabSize: number, line: number, prevLine: number, prevLineText: string) {
 		let validPrecedingLine = prevLine;
 		while (validPrecedingLine >= 1) {
 			// skip empty lines as empty lines just inherit indentation
@@ -346,9 +325,11 @@ export class MoveLinesCommand implements ICommand {
 		}
 		*/
 
-		const offset = this._isMovingDown ? 1 : -1;
-		const s = this._selection;
-		const result = new Selection(s.startLineNumber + offset, s.startColumn, s.endLineNumber + offset, s.endColumn);
+		//const offset = this._isMovingDown ? 1 : -1;
+		//const s = this._selection;
+		//const result = new Selection(s.startLineNumber + offset, s.startColumn, s.endLineNumber + offset, s.endColumn);
+
+		const result = helper.getTrackedSelection(this._selectionId!);
 
 		return result;
 	}

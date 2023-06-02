@@ -24,15 +24,14 @@ export function testCommand(
 	forceTokenization?: boolean,
 	prepare?: (accessor: ServicesAccessor, disposables: DisposableStore) => void
 ): void {
-	const commandFactoryWithSingleSelection = (accessor: ServicesAccessor, selections: Selection[]) => { return commandFactory(accessor, selections[0]); };
-	testCommandWithMultipleSelection(lines, languageId, [selection], commandFactoryWithSingleSelection, expectedLines, [expectedSelection], forceTokenization, prepare);
+	testCommandWithMultipleSelection(lines, languageId, [selection], commandFactory, expectedLines, [expectedSelection], forceTokenization, prepare);
 }
 
 export function testCommandWithMultipleSelection(
 	lines: string[],
 	languageId: string | null,
 	selections: Selection[],
-	commandFactory: (accessor: ServicesAccessor, selections: Selection[]) => ICommand,
+	commandFactory: (accessor: ServicesAccessor, selection: Selection) => ICommand,
 	expectedLines: string[],
 	expectedSelections: Selection[],
 	forceTokenization?: boolean,
@@ -53,8 +52,10 @@ export function testCommandWithMultipleSelection(
 
 	viewModel.setSelections('tests', selections);
 
-	const command = instantiationService.invokeFunction((accessor) => commandFactory(accessor, viewModel.getSelections()));
-	viewModel.executeCommand(command, 'tests');
+	for (const selection of selections) {
+		const command = instantiationService.invokeFunction((accessor) => commandFactory(accessor, selection));
+		viewModel.executeCommand(command, 'tests');
+	}
 
 	assert.deepStrictEqual(model.getLinesContent(), expectedLines);
 

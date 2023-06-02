@@ -25,7 +25,6 @@ import * as nls from 'vs/nls';
 import { MenuId } from 'vs/platform/actions/common/actions';
 import { KeybindingWeight } from 'vs/platform/keybinding/common/keybindingsRegistry';
 import { ILanguageConfigurationService } from 'vs/editor/common/languages/languageConfigurationRegistry';
-import { LineRange } from 'vs/editor/common/core/lineRange';
 
 // copy lines
 
@@ -175,32 +174,26 @@ abstract class AbstractMoveLinesAction extends EditorAction {
 	public run(accessor: ServicesAccessor, editor: ICodeEditor): void {
 		const languageConfigurationService = accessor.get(ILanguageConfigurationService);
 
-		const commands: ICommand[] = [];
 		const selections = editor.getSelections() || [];
 		const autoIndent = editor.getOption(EditorOption.autoIndent);
+		const commands: (ICommand | null)[] = [null];
+
+		// We must process moves in order. If we don't then it's possible for moves to cancel each other out. Consider the
+		// example text below. If we move line c up, then move line b up we end up back where we started.
+		// ```
+		// a
+		// |b
+		// |c
+		// ```
 
 		selections.sort(Selection.compareRangesUsingStarts);
-		for (let i = 0; i < selections.length; i++) {
-			let batch = new LineRange(selections[i].startLineNumber, selections[i].endLineNumber + 1);
-
-			let j = i;
-			for (; j < selections.length - 1; j++) {
-				const lineRange = new LineRange(selections[j + 1].startLineNumber, selections[j + 1].endLineNumber + 1);
-				if (batch.overlapOrTouch(lineRange)) {
-					batch = batch.join(lineRange);
-				} else {
-					break;
-				}
-			}
-
-			commands.push(new MoveLinesCommand([selections[i]], this.down, autoIndent, languageConfigurationService, batch, true));
-			while (i < j) {
-				commands.push(new MoveLinesCommand([selections[++i]], this.down, autoIndent, languageConfigurationService, batch, false));
-			}
-		}
 
 		editor.pushUndoStop();
-		editor.executeCommands(this.id, commands);
+		for (const selection of selections) {
+			commands[0] = new MoveLinesCommand(selection, this.down, autoIndent, languageConfigurationService);
+			editor.executeCommands(this.id, commands);
+			break;
+		}
 		editor.pushUndoStop();
 	}
 }

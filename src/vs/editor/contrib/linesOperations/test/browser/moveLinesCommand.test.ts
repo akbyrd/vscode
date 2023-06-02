@@ -4,7 +4,6 @@
  *--------------------------------------------------------------------------------------------*/
 import { Disposable } from 'vs/base/common/lifecycle';
 import { EditorAutoIndentStrategy } from 'vs/editor/common/config/editorOptions';
-import { LineRange } from 'vs/editor/common/core/lineRange';
 import { Selection } from 'vs/editor/common/core/selection';
 import { ILanguageService } from 'vs/editor/common/languages/language';
 import { IndentationRule } from 'vs/editor/common/languages/languageConfiguration';
@@ -15,23 +14,19 @@ import { testCommand, testCommandWithMultipleSelection } from 'vs/editor/test/br
 import { TestLanguageConfigurationService } from 'vs/editor/test/common/modes/testLanguageConfigurationService';
 
 function testMoveLinesDownCommand(lines: string[], selections: Selection[], expectedLines: string[], expectedSelections: Selection[], languageConfigurationService = new TestLanguageConfigurationService()): void {
-	const batch = new LineRange(selections[0].startLineNumber, selections[selections.length - 1].endLineNumber + 1);
-	testCommandWithMultipleSelection(lines, null, selections, (accessor, sels) => new MoveLinesCommand(sels, true, EditorAutoIndentStrategy.Advanced, languageConfigurationService, batch, true), expectedLines, expectedSelections);
+	testCommandWithMultipleSelection(lines, null, selections, (accessor, sel) => new MoveLinesCommand(sel, true, EditorAutoIndentStrategy.Advanced, languageConfigurationService), expectedLines, expectedSelections);
 }
 
 function testMoveLinesUpCommand(lines: string[], selections: Selection[], expectedLines: string[], expectedSelections: Selection[], languageConfigurationService = new TestLanguageConfigurationService()): void {
-	const batch = new LineRange(selections[0].startLineNumber, selections[selections.length - 1].endLineNumber + 1);
-	testCommandWithMultipleSelection(lines, null, selections, (accessor, sels) => new MoveLinesCommand(sels, false, EditorAutoIndentStrategy.Advanced, languageConfigurationService, batch, true), expectedLines, expectedSelections);
+	testCommandWithMultipleSelection(lines, null, selections, (accessor, sel) => new MoveLinesCommand(sel, false, EditorAutoIndentStrategy.Advanced, languageConfigurationService), expectedLines, expectedSelections);
 }
 
 function testMoveLinesDownWithIndentCommand(languageId: string, lines: string[], selection: Selection, expectedLines: string[], expectedSelection: Selection, languageConfigurationService = new TestLanguageConfigurationService()): void {
-	const batch = new LineRange(selection.startLineNumber, selection.endLineNumber + 1);
-	testCommand(lines, languageId, selection, (accessor, sel) => new MoveLinesCommand([sel], true, EditorAutoIndentStrategy.Full, languageConfigurationService, batch, true), expectedLines, expectedSelection);
+	testCommand(lines, languageId, selection, (accessor, sel) => new MoveLinesCommand(sel, true, EditorAutoIndentStrategy.Full, languageConfigurationService), expectedLines, expectedSelection);
 }
 
 function testMoveLinesUpWithIndentCommand(languageId: string, lines: string[], selection: Selection, expectedLines: string[], expectedSelection: Selection, languageConfigurationService = new TestLanguageConfigurationService()): void {
-	const batch = new LineRange(selection.startLineNumber, selection.endLineNumber + 1);
-	testCommand(lines, languageId, selection, (accessor, sel) => new MoveLinesCommand([sel], false, EditorAutoIndentStrategy.Full, languageConfigurationService, batch, true), expectedLines, expectedSelection);
+	testCommand(lines, languageId, selection, (accessor, sel) => new MoveLinesCommand(sel, false, EditorAutoIndentStrategy.Full, languageConfigurationService), expectedLines, expectedSelection);
 }
 
 suite('Editor Contrib - Move Lines Command', () => {
