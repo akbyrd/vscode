@@ -31,7 +31,9 @@ function testMoveLinesUpWithIndentCommand(languageId: string, lines: string[], s
 
 suite('Editor Contrib - Move Lines Command', () => {
 
-	test('move first up / last down disabled', function () {
+	test('move first up / last down disabled', async function () {
+		await new Promise(resolve => setTimeout(resolve, 250));
+
 		testMoveLinesUpCommand(
 			[
 				'first',

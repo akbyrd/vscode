@@ -275,6 +275,15 @@
 			"dependsOn": [
 				"Core - Build"
 			]
+		},
+		{
+			"label": "Sleep",
+			"type": "shell",
+			"command": "Start-Sleep -Milliseconds 100",
+			"presentation": {
+				"reveal": "silent",
+				"close": true,
+			}
 		}
 	]
 }
